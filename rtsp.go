@@ -2,6 +2,7 @@ package rtsp
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -10,15 +11,18 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/WUMUXIAN/go-common-utils/codec"
 )
 
+// RTSP methods
 const (
 	// Client to server for presentation and stream objects; recommended
 	DESCRIBE = "DESCRIBE"
 	// Bidirectional for client and stream objects; optional
 	ANNOUNCE = "ANNOUNCE"
 	// Bidirectional for client and stream objects; optional
-	GET_PARAMETER = "GET_PARAMETER"
+	GETPARAMETER = "GET_PARAMETER"
 	// Bidirectional for client and stream objects; required for Client to server, optional for server to client
 	OPTIONS = "OPTIONS"
 	// Client to server for presentation and stream objects; recommended
@@ -32,11 +36,12 @@ const (
 	// Client to server for stream objects; required
 	SETUP = "SETUP"
 	// Bidirectional for presentation and stream objects; optional
-	SET_PARAMETER = "SET_PARAMETER"
+	SETPARAMETER = "SET_PARAMETER"
 	// Client to server for presentation and stream objects; required
 	TEARDOWN = "TEARDOWN"
 )
 
+// Response status
 const (
 	// all requests
 	Continue = 100
@@ -130,10 +135,12 @@ const (
 	OptionNotsupport = 551
 )
 
+// ResponseWriter defines a response writer interface
 type ResponseWriter interface {
 	http.ResponseWriter
 }
 
+// Request defines a request body
 type Request struct {
 	Method        string
 	URL           *url.URL
@@ -145,6 +152,7 @@ type Request struct {
 	Body          io.ReadCloser
 }
 
+// String prints a request in a beautiful way.
 func (r Request) String() string {
 	s := fmt.Sprintf("%s %s %s/%d.%d\r\n", r.Method, r.URL, r.Proto, r.ProtoMajor, r.ProtoMinor)
 	for k, v := range r.Header {
@@ -160,6 +168,7 @@ func (r Request) String() string {
 	return s
 }
 
+// NewRequest creates a new request.
 func NewRequest(method, urlStr, cSeq string, body io.ReadCloser) (*Request, error) {
 	u, err := url.Parse(urlStr)
 	if err != nil {
@@ -178,19 +187,95 @@ func NewRequest(method, urlStr, cSeq string, body io.ReadCloser) (*Request, erro
 	return req, nil
 }
 
+// DigestAuthencitation defines different parts of a digest authenciation
+type DigestAuthencitation struct {
+	UserName string
+	Password string
+	Realm    string
+	Nonce    string
+}
+
+// GetDigestResponse calculates a response for digest authenciation
+func (d DigestAuthencitation) GetDigestResponse(method, uri string) (response string) {
+	hash1 := codec.GetHash(codec.MD5, []byte(d.UserName+":"+d.Realm+":"+d.Password))
+	hash2 := codec.GetHash(codec.MD5, []byte(method+":"+uri))
+	response = codec.GetHash(codec.MD5, []byte(hash1.Hex()+":"+d.Nonce+":"+hash2.Hex())).Hex()
+	return
+}
+
+// Session defines a rtsp session.
 type Session struct {
 	cSeq    int
 	conn    net.Conn
 	session string
+	uri     string
+	host    string
+	Digest  *DigestAuthencitation
 }
 
-func NewSession() *Session {
-	return &Session{}
+// NewSession creates a new rtsp session to a certain stream.
+func NewSession(rtspAddr string) (session *Session, err error) {
+	url, err := url.Parse(rtspAddr)
+	if err != nil {
+		return nil, err
+	}
+	if url.Scheme != "rtsp" {
+		return nil, errors.New("invalid rtsp address")
+	}
+	session = new(Session)
+	session.Digest = new(DigestAuthencitation)
+	if url.User != nil {
+		session.Digest.UserName = url.User.Username()
+		session.Digest.Password, _ = url.User.Password()
+	}
+	session.uri = url.Scheme + "://" + url.Host
+	session.host = url.Host
+
+	session.conn, err = net.Dial("tcp", session.host)
+	if err != nil {
+		return nil, err
+	}
+	return
 }
 
 func (s *Session) nextCSeq() string {
 	s.cSeq++
 	return strconv.Itoa(s.cSeq)
+}
+
+func (s *Session) injectAuthencitationInfo(request *Request, method string) {
+	if s.Digest.Nonce != "" {
+		digest := fmt.Sprintf("Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", response=\"%s\"",
+			s.Digest.UserName, s.Digest.Realm, s.Digest.Nonce, s.uri, s.Digest.GetDigestResponse(method, s.uri))
+		request.Header["Authorization"] = []string{
+			digest,
+		}
+	}
+}
+
+func (s *Session) handleUnauthorized(response *Response, err error) (*Response, error) {
+	if err != nil {
+		return response, err
+	}
+	if response.StatusCode == Unauthorized {
+		// In this case, the response header will be containing digest info only.
+		for key, digest := range response.Header {
+			if key != "Cseq" {
+				dg := strings.Replace(digest[0], "Digest", "", -1)
+				dgFields := strings.Split(dg, ",")
+				for _, dgField := range dgFields {
+					dgField = strings.TrimSpace(dgField)
+					dgFieldDetails := strings.Split(dgField, "=")
+					if dgFieldDetails[0] == "realm" {
+						s.Digest.Realm = strings.Trim(dgFieldDetails[1], "\"")
+					} else {
+						s.Digest.Nonce = strings.Trim(dgFieldDetails[1], "\"")
+					}
+				}
+			}
+		}
+	}
+	return response, err
 }
 
 func (s *Session) Describe(urlStr string) (*Response, error) {
@@ -215,24 +300,29 @@ func (s *Session) Describe(urlStr string) (*Response, error) {
 	return ReadResponse(s.conn)
 }
 
-func (s *Session) Options(urlStr string) (*Response, error) {
-	req, err := NewRequest(OPTIONS, urlStr, s.nextCSeq(), nil)
+// Options sends a Options command
+func (s *Session) Options() (*Response, error) {
+	req, err := NewRequest(OPTIONS, s.uri, s.nextCSeq(), nil)
 	if err != nil {
 		panic(err)
 	}
 
+	s.injectAuthencitationInfo(req, OPTIONS)
+
 	if s.conn == nil {
-		s.conn, err = net.Dial("tcp", req.URL.Host)
+		s.conn, err = net.Dial("tcp", s.host)
 		if err != nil {
 			return nil, err
 		}
 	}
 
+	fmt.Println(req.String())
+
 	_, err = io.WriteString(s.conn, req.String())
 	if err != nil {
 		return nil, err
 	}
-	return ReadResponse(s.conn)
+	return s.handleUnauthorized(ReadResponse(s.conn))
 }
 
 func (s *Session) Setup(urlStr, transport string) (*Response, error) {
@@ -379,6 +469,7 @@ func (res Response) String() string {
 	return s
 }
 
+// ReadResponse reads the server's response
 func ReadResponse(r io.Reader) (res *Response, err error) {
 	res = new(Response)
 	res.Header = make(map[string][]string)
