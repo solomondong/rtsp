@@ -18,8 +18,8 @@ type SessionSectionOriginator struct {
 	Address     string
 }
 
-// SessionSectionConnectionInformation defines SessionSectionConnectionInformation body
-type SessionSectionConnectionInformation struct {
+// ConnectionInformation defines ConnectionInformation body
+type ConnectionInformation struct {
 	NetworkType string
 	AddressType string
 	Address     string
@@ -37,6 +37,20 @@ type SessionSectionRepeat struct {
 	EndTime   string
 }
 
+// SessionSectionMedia defines SessionSectionMedia body
+type SessionSectionMedia struct {
+	Type                  string
+	Port                  string
+	Procotol              string
+	PayloadType           string
+	Title                 string
+	ConnectionInformation ConnectionInformation
+	BandwidthInformation  []string
+	EncryptionKey         string
+	BooleanAttributes     map[string]bool
+	KVAttributes          map[string]string
+}
+
 // SessionSection defines SessionSection body
 type SessionSection struct {
 	Version               int
@@ -46,12 +60,15 @@ type SessionSection struct {
 	URI                   string
 	Emails                []string
 	Phones                []string
-	ConnectionInformation SessionSectionConnectionInformation
+	ConnectionInformation ConnectionInformation
 	BandwidthInformation  []string
 	TimeZone              string
 	EncryptionKey         string
 	Time                  []SessionSectionTime
 	Repeat                []string
+	BooleanAttributes     map[string]bool
+	KVAttributes          map[string]string
+	Medias                map[string]SessionSectionMedia
 }
 
 // v=0
@@ -73,7 +90,10 @@ type SessionSection struct {
 // ParseSdp parses the sdp session content.
 func ParseSdp(r io.Reader) (SessionSection, error) {
 	var packet SessionSection
+	packet.BooleanAttributes = make(map[string]bool)
+	packet.KVAttributes = make(map[string]string)
 	s := bufio.NewScanner(r)
+	mediaSectionStarted := false
 	for s.Scan() {
 		parts := strings.SplitN(s.Text(), "=", 2)
 		if len(parts) == 2 {
@@ -102,7 +122,9 @@ func ParseSdp(r io.Reader) (SessionSection, error) {
 				packet.SessionName = parts[1]
 			// session information
 			case "i":
-				packet.SessionInformation = parts[1]
+				if !mediaSectionStarted {
+					packet.SessionInformation = parts[1]
+				}
 			// URI of description
 			case "u":
 				packet.URI = parts[1]
@@ -114,15 +136,19 @@ func ParseSdp(r io.Reader) (SessionSection, error) {
 				packet.Phones = append(packet.Phones, parts[1])
 			// connection information - not required if included in all media
 			case "c":
-				cnParts := strings.Split(parts[1], " ")
-				if len(cnParts) != 3 {
-					return packet, errors.New("connection info field is wrong")
+				if !mediaSectionStarted {
+					cnParts := strings.Split(parts[1], " ")
+					if len(cnParts) != 3 {
+						return packet, errors.New("connection info field is wrong")
+					}
+					packet.ConnectionInformation = ConnectionInformation{cnParts[0], cnParts[1], cnParts[2]}
 				}
-				packet.ConnectionInformation = SessionSectionConnectionInformation{cnParts[0], cnParts[1], cnParts[2]}
 			// bandwidth information
 			case "b":
 				// TODO: parse this
-				packet.BandwidthInformation = append(packet.BandwidthInformation, parts[1])
+				if !mediaSectionStarted {
+					packet.BandwidthInformation = append(packet.BandwidthInformation, parts[1])
+				}
 			case "t":
 				// TODO: t might occur multiple times...need to see an example in order to learn how to deal with it.
 				tmParts := strings.Split(parts[1], " ")
@@ -139,8 +165,25 @@ func ParseSdp(r io.Reader) (SessionSection, error) {
 				packet.TimeZone = parts[1]
 			// encryption key
 			case "k":
-				packet.EncryptionKey = parts[1]
+				if !mediaSectionStarted {
+					packet.EncryptionKey = parts[1]
+				}
+			case "a":
+				// the attributes.
+				kv := strings.Split("a", ":")
+				if len(kv) == 1 {
+					if !mediaSectionStarted {
+						packet.BooleanAttributes[kv[0]] = true
+					}
+				} else {
+					if !mediaSectionStarted {
+						packet.KVAttributes[kv[0]] = kv[1]
+					}
+				}
+			case "m":
+				// the media.
 			}
+
 		}
 	}
 	return packet, nil
