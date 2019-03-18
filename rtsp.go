@@ -278,8 +278,9 @@ func (s *Session) handleUnauthorized(response *Response, err error) (*Response, 
 	return response, err
 }
 
-func (s *Session) Describe(urlStr string) (*Response, error) {
-	req, err := NewRequest(DESCRIBE, urlStr, s.nextCSeq(), nil)
+// Describe describes the stream
+func (s *Session) Describe() (*Response, error) {
+	req, err := NewRequest(DESCRIBE, s.uri, s.nextCSeq(), nil)
 	if err != nil {
 		panic(err)
 	}
@@ -325,8 +326,9 @@ func (s *Session) Options() (*Response, error) {
 	return s.handleUnauthorized(ReadResponse(s.conn))
 }
 
-func (s *Session) Setup(urlStr, transport string) (*Response, error) {
-	req, err := NewRequest(SETUP, urlStr, s.nextCSeq(), nil)
+// Setup setups how the stream will be transported.
+func (s *Session) Setup(transport string) (*Response, error) {
+	req, err := NewRequest(SETUP, s.uri, s.nextCSeq(), nil)
 	if err != nil {
 		panic(err)
 	}

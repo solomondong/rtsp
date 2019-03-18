@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 
 	"github.com/WUMUXIAN/rtsp"
@@ -42,32 +43,31 @@ func main() {
 
 		// If we need to authenciate
 		if res.StatusCode == rtsp.Unauthorized {
-			res, err := sess.Options()
+			res, err = sess.Options()
 			if err != nil {
 				log.Fatalln(err)
 			}
 			fmt.Println(res)
 		}
-		//
-		// res, err = sess.Describe(rtspUrl)
-		// if err != nil {
-		// 	log.Fatalln(err)
-		// }
-		// fmt.Println("Describe:")
-		// fmt.Println(res)
-		//
-		// p, err := rtsp.ParseSdp(&io.LimitedReader{R: res.Body, N: res.ContentLength})
-		// if err != nil {
-		// 	log.Fatalln(err)
-		// }
-		// log.Printf("%+v", p)
-		//
-		// rtpPort, rtcpPort := 8000, 8001
-		// res, err = sess.Setup(rtspUrl, fmt.Sprintf("RTP/AVP;unicast;client_port=%d-%d", rtpPort, rtcpPort))
-		// if err != nil {
-		// 	log.Fatalln(err)
-		// }
-		// log.Println(res)
+
+		res, err = sess.Describe()
+		if err != nil {
+			log.Fatalln(err)
+		}
+		fmt.Println(res)
+
+		p, err := rtsp.ParseSdp(&io.LimitedReader{R: res.Body, N: res.ContentLength})
+		if err != nil {
+			log.Fatalln(err)
+		}
+		log.Printf("%+v", p)
+
+		rtpPort, rtcpPort := 8000, 8001
+		res, err = sess.Setup(fmt.Sprintf("RTP/AVP;unicast;client_port=%d-%d", rtpPort, rtcpPort))
+		if err != nil {
+			log.Fatalln(err)
+		}
+		log.Println(res)
 		//
 		// res, err = sess.Play(rtspUrl, res.Header.Get("Session"))
 		// if err != nil {
