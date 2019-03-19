@@ -205,8 +205,9 @@ func (d DigestAuthencitation) GetDigestResponse(method, uri string) (response st
 
 // Session defines a rtsp session.
 type Session struct {
-	cSeq    int
-	conn    net.Conn
+	cSeq int
+	conn net.Conn
+
 	session string
 	uri     string
 	host    string
@@ -236,6 +237,16 @@ func NewSession(rtspAddr string) (session *Session, err error) {
 		return nil, err
 	}
 	return
+}
+
+// Host returns the host this session connects to.
+func (s *Session) Host() string {
+	return s.host
+}
+
+// Conn returns the tcp connection of the session.
+func (s *Session) Conn() net.Conn {
+	return s.conn
 }
 
 func (s *Session) nextCSeq() string {

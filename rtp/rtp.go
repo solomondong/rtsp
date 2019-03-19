@@ -1,14 +1,13 @@
 package rtp
 
 import (
+	"fmt"
 	"net"
 )
 
+// some consts
 const (
-	RTP_VERSION = 2
-)
-
-const (
+	RTPVERSION    = 2
 	hasRtpPadding = 1 << 2
 	hasRtpExt     = 1 << 3
 )
@@ -45,9 +44,22 @@ type RtpPacket struct {
 	Payload []byte
 }
 
+func (r RtpPacket) String() string {
+	return fmt.Sprintf("RTP Packet: \nVersion:%b---Padding:%v---Ext:%v---Marker:%v--PayloadType:%v\n"+
+		"SequenceNumber:%v---Timestamp---%v---SyncSource---%v",
+		r.Version, r.Padding, r.Ext, r.Marker, r.PayloadType,
+		r.SequenceNumber, r.Timestamp, r.SyncSource)
+	// fmt.Println("Version:", r.Version)
+	// fmt.Println("Padding:", r.Padding)
+	// fmt.Println("Ext:", r.Ext)
+	// fmt.Println("Marker:", r.Marker)
+	// fmt.Println("PayloadType:", string(r.PayloadType))
+	// fmt.Println("SequenceNumber:", r.SequenceNumber)
+}
+
 type Session struct {
-	Rtp  net.PacketConn
-	Rtcp net.PacketConn
+	Rtp  net.Conn
+	Rtcp net.Conn
 
 	RtpChan  <-chan RtpPacket
 	RtcpChan <-chan []byte
@@ -56,7 +68,7 @@ type Session struct {
 	rtcpChan chan<- []byte
 }
 
-func New(rtp, rtcp net.PacketConn) *Session {
+func New(rtp, rtcp net.Conn) *Session {
 	rtpChan := make(chan RtpPacket, 10)
 	rtcpChan := make(chan []byte, 10)
 	s := &Session{
@@ -79,10 +91,10 @@ func toUint(arr []byte) (ret uint) {
 	return ret
 }
 
-func (s *Session) HandleRtpConn(conn net.PacketConn) {
+func (s *Session) HandleRtpConn(conn net.Conn) {
 	buf := make([]byte, 4096)
 	for {
-		n, _, err := conn.ReadFrom(buf)
+		n, err := conn.Read(buf)
 		if err != nil {
 			panic(err)
 		}
@@ -93,10 +105,10 @@ func (s *Session) HandleRtpConn(conn net.PacketConn) {
 	}
 }
 
-func (s *Session) HandleRtcpConn(conn net.PacketConn) {
+func (s *Session) HandleRtcpConn(conn net.Conn) {
 	buf := make([]byte, 4096)
 	for {
-		n, _, err := conn.ReadFrom(buf)
+		n, err := conn.Read(buf)
 		if err != nil {
 			panic(err)
 		}
@@ -118,7 +130,7 @@ func (s *Session) handleRtp(buf []byte) {
 		Timestamp:      toUint(buf[4:8]),
 		SyncSource:     toUint(buf[8:12]),
 	}
-	if packet.Version != RTP_VERSION {
+	if packet.Version != RTPVERSION {
 		panic("Unsupported version")
 	}
 

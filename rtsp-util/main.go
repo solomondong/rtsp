@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 
 	"github.com/WUMUXIAN/rtsp"
+	"github.com/WUMUXIAN/rtsp/rtp"
 )
 
 func init() {
@@ -69,13 +71,25 @@ func main() {
 		if err != nil {
 			log.Fatalln(err)
 		}
-		log.Println(res)
+		// log.Println(res)
+
+		transport := res.Header.Get("Transport")
+		fmt.Println(strings.Split(transport, ";"))
 
 		res, err = sess.Play(res.Header.Get("Session"))
 		if err != nil {
 			log.Fatalln(err)
 		}
 		log.Println(res)
+
+		rtpSession := rtp.NewTCPInterleavedSession(sess.Conn())
+		for {
+			select {
+			case rtpPacket := <-rtpSession.RtpChan:
+				fmt.Println(rtpPacket)
+			}
+		}
+
 	} else {
 		r, err := rtsp.ReadRequest(bytes.NewBufferString(sampleRequest))
 		if err != nil {
