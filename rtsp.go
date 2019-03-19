@@ -294,6 +294,8 @@ func (s *Session) Describe() (*Response, error) {
 		}
 	}
 
+	fmt.Println(req.String())
+
 	_, err = io.WriteString(s.conn, req.String())
 	if err != nil {
 		return nil, err
@@ -327,8 +329,8 @@ func (s *Session) Options() (*Response, error) {
 }
 
 // Setup setups how the stream will be transported.
-func (s *Session) Setup(transport string) (*Response, error) {
-	req, err := NewRequest(SETUP, s.uri, s.nextCSeq(), nil)
+func (s *Session) Setup(trackID, transport string) (*Response, error) {
+	req, err := NewRequest(SETUP, s.uri+"/"+trackID, s.nextCSeq(), nil)
 	if err != nil {
 		panic(err)
 	}
@@ -342,6 +344,8 @@ func (s *Session) Setup(transport string) (*Response, error) {
 		}
 	}
 
+	fmt.Println(req.String())
+
 	_, err = io.WriteString(s.conn, req.String())
 	if err != nil {
 		return nil, err
@@ -351,13 +355,14 @@ func (s *Session) Setup(transport string) (*Response, error) {
 	return resp, err
 }
 
-func (s *Session) Play(urlStr, sessionId string) (*Response, error) {
-	req, err := NewRequest(PLAY, urlStr, s.nextCSeq(), nil)
+// Play plays a video stream given the sessionID
+func (s *Session) Play(sessionID string) (*Response, error) {
+	req, err := NewRequest(PLAY, s.uri, s.nextCSeq(), nil)
 	if err != nil {
 		panic(err)
 	}
 
-	req.Header.Add("Session", sessionId)
+	req.Header.Add("Session", sessionID)
 
 	if s.conn == nil {
 		s.conn, err = net.Dial("tcp", req.URL.Host)
@@ -365,6 +370,8 @@ func (s *Session) Play(urlStr, sessionId string) (*Response, error) {
 			return nil, err
 		}
 	}
+
+	fmt.Println(req.String())
 
 	_, err = io.WriteString(s.conn, req.String())
 	if err != nil {

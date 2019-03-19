@@ -68,7 +68,7 @@ type SessionSection struct {
 	Repeat                []string
 	BooleanAttributes     map[string]bool
 	KVAttributes          map[string]string
-	Medias                map[string]SessionSectionMedia
+	Medias                []SessionSectionMedia
 }
 
 // v=0
@@ -124,6 +124,8 @@ func ParseSdp(r io.Reader) (SessionSection, error) {
 			case "i":
 				if !mediaSectionStarted {
 					packet.SessionInformation = parts[1]
+				} else {
+					packet.Medias[len(packet.Medias)-1].Title = parts[1]
 				}
 			// URI of description
 			case "u":
@@ -136,18 +138,22 @@ func ParseSdp(r io.Reader) (SessionSection, error) {
 				packet.Phones = append(packet.Phones, parts[1])
 			// connection information - not required if included in all media
 			case "c":
+				cnParts := strings.Split(parts[1], " ")
+				if len(cnParts) != 3 {
+					return packet, errors.New("connection info field is wrong")
+				}
 				if !mediaSectionStarted {
-					cnParts := strings.Split(parts[1], " ")
-					if len(cnParts) != 3 {
-						return packet, errors.New("connection info field is wrong")
-					}
 					packet.ConnectionInformation = ConnectionInformation{cnParts[0], cnParts[1], cnParts[2]}
+				} else {
+					packet.Medias[len(packet.Medias)-1].ConnectionInformation = ConnectionInformation{cnParts[0], cnParts[1], cnParts[2]}
 				}
 			// bandwidth information
 			case "b":
 				// TODO: parse this
 				if !mediaSectionStarted {
 					packet.BandwidthInformation = append(packet.BandwidthInformation, parts[1])
+				} else {
+					packet.Medias[len(packet.Medias)-1].BandwidthInformation = append(packet.Medias[len(packet.Medias)-1].BandwidthInformation, parts[1])
 				}
 			case "t":
 				// TODO: t might occur multiple times...need to see an example in order to learn how to deal with it.
@@ -167,23 +173,38 @@ func ParseSdp(r io.Reader) (SessionSection, error) {
 			case "k":
 				if !mediaSectionStarted {
 					packet.EncryptionKey = parts[1]
+				} else {
+					packet.Medias[len(packet.Medias)-1].EncryptionKey = parts[1]
 				}
 			case "a":
 				// the attributes.
-				kv := strings.Split("a", ":")
+				kv := strings.Split(parts[1], ":")
 				if len(kv) == 1 {
 					if !mediaSectionStarted {
 						packet.BooleanAttributes[kv[0]] = true
+					} else {
+						packet.Medias[len(packet.Medias)-1].BooleanAttributes[kv[0]] = true
 					}
 				} else {
 					if !mediaSectionStarted {
 						packet.KVAttributes[kv[0]] = kv[1]
+					} else {
+						packet.Medias[len(packet.Medias)-1].KVAttributes[kv[0]] = kv[1]
 					}
 				}
 			case "m":
 				// the media.
+				mediaSectionStarted = true
+				maParts := strings.Split(parts[1], " ")
+				packet.Medias = append(packet.Medias, SessionSectionMedia{
+					Type:              maParts[0],
+					Port:              maParts[1],
+					Procotol:          maParts[2],
+					PayloadType:       maParts[3],
+					BooleanAttributes: make(map[string]bool),
+					KVAttributes:      make(map[string]string),
+				})
 			}
-
 		}
 	}
 	return packet, nil

@@ -29,9 +29,9 @@ Public: DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE
 
 func main() {
 	if len(flag.Args()) >= 1 {
-		rtspUrl := flag.Args()[0]
+		rtspURL := flag.Args()[0]
 
-		sess, err := rtsp.NewSession(rtspUrl)
+		sess, err := rtsp.NewSession(rtspURL)
 		if err != nil {
 			log.Fatalln(err)
 		}
@@ -60,20 +60,22 @@ func main() {
 		if err != nil {
 			log.Fatalln(err)
 		}
-		log.Printf("%+v", p)
+		// log.Printf("%+v", p)
 
-		rtpPort, rtcpPort := 8000, 8001
-		res, err = sess.Setup(fmt.Sprintf("RTP/AVP;unicast;client_port=%d-%d", rtpPort, rtcpPort))
+		control := p.Medias[0].KVAttributes["control"]
+		protocol := p.Medias[0].Procotol + "/TCP"
+
+		res, err = sess.Setup(control, protocol)
 		if err != nil {
 			log.Fatalln(err)
 		}
 		log.Println(res)
-		//
-		// res, err = sess.Play(rtspUrl, res.Header.Get("Session"))
-		// if err != nil {
-		// 	log.Fatalln(err)
-		// }
-		// log.Println(res)
+
+		res, err = sess.Play(res.Header.Get("Session"))
+		if err != nil {
+			log.Fatalln(err)
+		}
+		log.Println(res)
 	} else {
 		r, err := rtsp.ReadRequest(bytes.NewBufferString(sampleRequest))
 		if err != nil {
