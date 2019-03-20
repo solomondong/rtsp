@@ -1,9 +1,7 @@
 rtsp
 ====
 
-`rtsp` implements RTSP in Go. The development focus is for video streaming from security cameras, but the library is developed such that it should be useful for any type of stream.
-
-Currently, `rtp` and `rtcp` are implemented as sub-packages, but this will likely change once the library matures.
+`rtsp` implements RTSP in Go and can be used as a RTSP client that can consume any RTSP stream.
 
 License
 =======

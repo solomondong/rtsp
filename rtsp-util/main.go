@@ -87,6 +87,8 @@ func main() {
 			select {
 			case rtpPacket := <-rtpSession.RtpChan:
 				fmt.Println(rtpPacket)
+			case rtcpPacket := <-rtpSession.RtcpChan:
+				fmt.Println(rtcpPacket)
 			}
 		}
 
