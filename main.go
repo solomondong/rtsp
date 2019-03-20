@@ -8,8 +8,9 @@ import (
 	"log"
 	"strings"
 
-	"github.com/WUMUXIAN/rtsp"
+	"github.com/WUMUXIAN/rtsp/client"
 	"github.com/WUMUXIAN/rtsp/rtp"
+	"github.com/WUMUXIAN/rtsp/sdp"
 )
 
 func init() {
@@ -33,7 +34,7 @@ func main() {
 	if len(flag.Args()) >= 1 {
 		rtspURL := flag.Args()[0]
 
-		sess, err := rtsp.NewSession(rtspURL)
+		sess, err := client.NewSession(rtspURL)
 		if err != nil {
 			log.Fatalln(err)
 		}
@@ -44,7 +45,7 @@ func main() {
 		fmt.Println(res)
 
 		// If we need to authenciate
-		if res.StatusCode == rtsp.Unauthorized {
+		if res.StatusCode == client.Unauthorized {
 			res, err = sess.Options()
 			if err != nil {
 				log.Fatalln(err)
@@ -58,20 +59,17 @@ func main() {
 		}
 		fmt.Println(res)
 
-		p, err := rtsp.ParseSdp(&io.LimitedReader{R: res.Body, N: res.ContentLength})
+		p, err := sdp.ParseSdp(&io.LimitedReader{R: res.Body, N: res.ContentLength})
 		if err != nil {
 			log.Fatalln(err)
 		}
-		// log.Printf("%+v", p)
+		log.Printf("%+v", p)
 
-		control := p.Medias[0].KVAttributes["control"]
-		protocol := p.Medias[0].Procotol + "/TCP"
-
-		res, err = sess.Setup(control, protocol)
+		res, err = sess.Setup(p.Medias[0].Control, p.Medias[0].Procotol+"/TCP")
 		if err != nil {
 			log.Fatalln(err)
 		}
-		// log.Println(res)
+		log.Println(res)
 
 		transport := res.Header.Get("Transport")
 		fmt.Println(strings.Split(transport, ";"))
@@ -93,14 +91,14 @@ func main() {
 		}
 
 	} else {
-		r, err := rtsp.ReadRequest(bytes.NewBufferString(sampleRequest))
+		r, err := client.ReadRequest(bytes.NewBufferString(sampleRequest))
 		if err != nil {
 			fmt.Println(err)
 		} else {
 			fmt.Println(r)
 		}
 
-		res, err := rtsp.ReadResponse(bytes.NewBufferString(sampleResponse))
+		res, err := client.ReadResponse(bytes.NewBufferString(sampleResponse))
 		if err != nil {
 			fmt.Println(err)
 		} else {

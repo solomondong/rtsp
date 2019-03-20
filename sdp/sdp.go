@@ -1,7 +1,9 @@
-package rtsp
+package sdp
 
 import (
 	"bufio"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"io"
 	"strconv"
@@ -40,15 +42,26 @@ type SessionSectionRepeat struct {
 // SessionSectionMedia defines SessionSectionMedia body
 type SessionSectionMedia struct {
 	Type                  string
-	Port                  string
+	Port                  int
 	Procotol              string
-	PayloadType           string
+	PayloadType           int
 	Title                 string
 	ConnectionInformation ConnectionInformation
 	BandwidthInformation  []string
 	EncryptionKey         string
 	BooleanAttributes     map[string]bool
 	KVAttributes          map[string]string
+
+	// These attributes are explicit
+	Control            string
+	Framerate          float64
+	Rtpmap             int
+	CodecType          string
+	TimeScale          int
+	Config             []byte
+	SpropParameterSets [][]byte
+	SizeLength         int
+	IndexLength        int
 }
 
 // SessionSection defines SessionSection body
@@ -133,7 +146,7 @@ func ParseSdp(r io.Reader) (SessionSection, error) {
 			// email address
 			case "e":
 				packet.Emails = append(packet.Emails, parts[1])
-			// phone number
+			// phone numberRtpmap
 			case "p":
 				packet.Phones = append(packet.Phones, parts[1])
 			// connection information - not required if included in all media
@@ -169,7 +182,7 @@ func ParseSdp(r io.Reader) (SessionSection, error) {
 			case "z":
 				// TODO: need to parse time zone.
 				packet.TimeZone = parts[1]
-			// encryption key
+			// encryption keyRtpmap
 			case "k":
 				if !mediaSectionStarted {
 					packet.EncryptionKey = parts[1]
@@ -189,21 +202,59 @@ func ParseSdp(r io.Reader) (SessionSection, error) {
 					if !mediaSectionStarted {
 						packet.KVAttributes[kv[0]] = kv[1]
 					} else {
-						packet.Medias[len(packet.Medias)-1].KVAttributes[kv[0]] = kv[1]
+						// here we will cater for the special keys.
+						switch kv[0] {
+						case "control":
+							packet.Medias[len(packet.Medias)-1].Control = kv[1]
+						case "framerate":
+							packet.Medias[len(packet.Medias)-1].Framerate, _ = strconv.ParseFloat(kv[1], 64)
+						case "rtpmap":
+							rtpmapVals := strings.Split(kv[1], " ")
+							packet.Medias[len(packet.Medias)-1].Rtpmap, _ = strconv.Atoi(rtpmapVals[0])
+							codecs := strings.Split(rtpmapVals[1], "/")
+							packet.Medias[len(packet.Medias)-1].CodecType = codecs[0]
+							packet.Medias[len(packet.Medias)-1].TimeScale, _ = strconv.Atoi(codecs[1])
+							// 96 packetization-mode=1;profile-level-id=64002A;sprop-parameter-sets=Z2QAKqwsaoHgCJ+WbgICAgQA,aO48sAA=
+						case "fmtp":
+							fmtpVals := strings.Split(kv[1], ";")
+							for _, fmtpVal := range fmtpVals {
+								kvals := strings.SplitN(fmtpVal, "=", 2)
+								if len(kvals) == 2 {
+									switch kvals[0] {
+									case "config":
+										packet.Medias[len(packet.Medias)-1].Config, _ = hex.DecodeString(kvals[1])
+									case "sizelength":
+										packet.Medias[len(packet.Medias)-1].SizeLength, _ = strconv.Atoi(kvals[1])
+									case "indexlength":
+										packet.Medias[len(packet.Medias)-1].IndexLength, _ = strconv.Atoi(kvals[1])
+									case "sprop-parameter-sets":
+										fields := strings.Split(kvals[1], ",")
+										for _, field := range fields {
+											val, _ := base64.StdEncoding.DecodeString(field)
+											packet.Medias[len(packet.Medias)-1].SpropParameterSets = append(packet.Medias[len(packet.Medias)-1].SpropParameterSets, val)
+										}
+									}
+								}
+							}
+						default:
+							packet.Medias[len(packet.Medias)-1].KVAttributes[kv[0]] = kv[1]
+						}
+
 					}
 				}
 			case "m":
 				// the media.
 				mediaSectionStarted = true
 				maParts := strings.Split(parts[1], " ")
-				packet.Medias = append(packet.Medias, SessionSectionMedia{
+				media := SessionSectionMedia{
 					Type:              maParts[0],
-					Port:              maParts[1],
 					Procotol:          maParts[2],
-					PayloadType:       maParts[3],
 					BooleanAttributes: make(map[string]bool),
 					KVAttributes:      make(map[string]string),
-				})
+				}
+				media.Port, _ = strconv.Atoi(maParts[1])
+				media.PayloadType, _ = strconv.Atoi(maParts[3])
+				packet.Medias = append(packet.Medias, media)
 			}
 		}
 	}
