@@ -56,7 +56,7 @@ func ParsePacket(buf []byte) Packet {
 		Version:        buf[0] >> 6,
 		Padding:        buf[0]>>5&1 != 0,
 		Ext:            buf[0]>>4&1 != 0,
-		CSRC:           make([]uint, buf[0]&0x0f),
+		CSRC:           make([]uint, int(buf[0]&0x0f)),
 		Marker:         buf[1]>>7 != 0,
 		PayloadType:    buf[1] & 0x7f,
 		SequenceNumber: toUint(buf[2:4]),

@@ -1,6 +1,9 @@
 package rtp
 
 import (
+	"bufio"
+	"fmt"
+	"io"
 	"net"
 
 	"github.com/WUMUXIAN/rtsp/rtcp"
@@ -17,38 +20,39 @@ type TCPInterleavedSession struct {
 
 // HandleConn handles the interleaved TCP connection
 func (t *TCPInterleavedSession) HandleConn(conn net.Conn) {
-	buf := make([]byte, 4096)
-	for {
-		n, err := conn.Read(buf)
-		if err != nil {
-			panic(err)
-		}
-		cpy := make([]byte, n)
-		copy(cpy, buf)
-		go t.handleConn(cpy)
-	}
+	// Handle connection, what we do is to read the RTP/RTCP packets one by one.
+	reader := bufio.NewReader(conn)
+	go t.readPackets(reader)
 }
 
-func (t *TCPInterleavedSession) handleConn(buf []byte) {
-	// fmt.Println("Buffer Length-->", len(buf))
-	// let's do the parsing here.
-	start := string(buf[0])
-	if start != "$" {
-		// Not a RTP or RTCP packet, skip..
-		// fmt.Printf("not a RTP or RTCP package, we can skip:--->\n")
-		return
-	}
-	channel := toUint(buf[1:2])
-	// length := toUint(buf[2:4])
-	// fmt.Println("channel:", channel)
-	// fmt.Println("length:", length)
-	if channel == 0 {
-		// It's a rtp package, the following content are for rtp.
-		t.rtpChan <- ParsePacket(buf[4:])
-	} else {
-		// fmt.Println("RTCP Channel->", channel)
-		// t.getRtcpPackage(buff[2:])
-		t.rtcpChan <- rtcp.ParsePacket(buf[4:])
+func (t *TCPInterleavedSession) readPackets(reader io.Reader) {
+	for {
+		header := make([]byte, 4)
+
+		if l, err := io.ReadFull(reader, header); err != nil || l != 4 || header[0] != '$' {
+			fmt.Println("err, read header not correct", err, l, header)
+			return
+		}
+		length := toUint(header[2:4])
+		channel := toUint(header[1:2])
+
+		// fmt.Println("length:", length, "channel:", channel)
+
+		// ready length of data.
+		data := make([]byte, length)
+
+		if l, err := io.ReadFull(reader, data); err != nil || l != int(length) {
+			fmt.Println("err, read data not correct", err, l, length)
+			return
+		}
+
+		// this means it's RTP
+		if channel%2 == 0 {
+			t.rtpChan <- ParsePacket(data)
+		} else {
+			// this means it's RTCP
+			t.rtcpChan <- rtcp.ParsePacket(data)
+		}
 	}
 }
 

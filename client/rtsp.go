@@ -5,14 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
-	"github.com/WUMUXIAN/go-common-utils/codec"
+	"github.com/WUMUXIAN/rtsp/rtcp"
+	"github.com/WUMUXIAN/rtsp/rtp"
 )
 
 // RTSP methods
@@ -140,69 +140,6 @@ type ResponseWriter interface {
 	http.ResponseWriter
 }
 
-// Request defines a request body
-type Request struct {
-	Method        string
-	URL           *url.URL
-	Proto         string
-	ProtoMajor    int
-	ProtoMinor    int
-	Header        http.Header
-	ContentLength int
-	Body          io.ReadCloser
-}
-
-// String prints a request in a beautiful way.
-func (r Request) String() string {
-	s := fmt.Sprintf("%s %s %s/%d.%d\r\n", r.Method, r.URL, r.Proto, r.ProtoMajor, r.ProtoMinor)
-	for k, v := range r.Header {
-		for _, v := range v {
-			s += fmt.Sprintf("%s: %s\r\n", k, v)
-		}
-	}
-	s += "\r\n"
-	if r.Body != nil {
-		str, _ := ioutil.ReadAll(r.Body)
-		s += string(str)
-	}
-	return s
-}
-
-// NewRequest creates a new request.
-func NewRequest(method, urlStr, cSeq string, body io.ReadCloser) (*Request, error) {
-	u, err := url.Parse(urlStr)
-	if err != nil {
-		return nil, err
-	}
-
-	req := &Request{
-		Method:     method,
-		URL:        u,
-		Proto:      "RTSP",
-		ProtoMajor: 1,
-		ProtoMinor: 0,
-		Header:     map[string][]string{"CSeq": []string{cSeq}},
-		Body:       body,
-	}
-	return req, nil
-}
-
-// DigestAuthencitation defines different parts of a digest authenciation
-type DigestAuthencitation struct {
-	UserName string
-	Password string
-	Realm    string
-	Nonce    string
-}
-
-// GetDigestResponse calculates a response for digest authenciation
-func (d DigestAuthencitation) GetDigestResponse(method, uri string) (response string) {
-	hash1 := codec.GetHash(codec.MD5, []byte(d.UserName+":"+d.Realm+":"+d.Password))
-	hash2 := codec.GetHash(codec.MD5, []byte(method+":"+uri))
-	response = codec.GetHash(codec.MD5, []byte(hash1.Hex()+":"+d.Nonce+":"+hash2.Hex())).Hex()
-	return
-}
-
 // Session defines a rtsp session.
 type Session struct {
 	cSeq int
@@ -212,6 +149,11 @@ type Session struct {
 	uri     string
 	host    string
 	Digest  *DigestAuthencitation
+
+	RtpChan  <-chan rtp.Packet
+	rtpChan  chan<- rtp.Packet
+	RtcpChan <-chan rtcp.Packet
+	rtcpChan chan<- rtcp.Packet
 }
 
 // NewSession creates a new rtsp session to a certain stream.
@@ -233,20 +175,46 @@ func NewSession(rtspAddr string) (session *Session, err error) {
 	session.host = url.Host
 
 	session.conn, err = net.Dial("tcp", session.host)
+	return
+}
+
+// NewRequest creates a new request.
+func (s *Session) newRequest(method, urlStr, cSeq string, body io.ReadCloser) (*Request, error) {
+	u, err := url.Parse(urlStr)
 	if err != nil {
 		return nil, err
 	}
-	return
+
+	req := &Request{
+		Method:     method,
+		URL:        u,
+		Proto:      "RTSP",
+		ProtoMajor: 1,
+		ProtoMinor: 0,
+		Header:     map[string][]string{"CSeq": []string{cSeq}},
+		Body:       body,
+	}
+
+	// always inject the authenciation info when send a request if there're any.
+	s.injectAuthencitationInfo(req, method)
+
+	fmt.Println(req)
+	return req, nil
+}
+
+// SetInterleaved sets the session as interleaved
+func (s *Session) SetInterleaved() {
+	rtpChan := make(chan rtp.Packet, 10)
+	rtcpChan := make(chan rtcp.Packet, 10)
+	s.rtpChan = rtpChan
+	s.RtpChan = rtpChan
+	s.rtcpChan = rtcpChan
+	s.RtcpChan = rtcpChan
 }
 
 // Host returns the host this session connects to.
 func (s *Session) Host() string {
 	return s.host
-}
-
-// Conn returns the tcp connection of the session.
-func (s *Session) Conn() net.Conn {
-	return s.conn
 }
 
 func (s *Session) nextCSeq() string {
@@ -289,107 +257,94 @@ func (s *Session) handleUnauthorized(response *Response, err error) (*Response, 
 	return response, err
 }
 
+func (s *Session) sendRequest(req *Request) error {
+	if s.conn == nil {
+		return errors.New("connection not established")
+	}
+
+	_, err := io.WriteString(s.conn, req.String())
+	return err
+}
+
 // Describe describes the stream
-func (s *Session) Describe() (*Response, error) {
-	req, err := NewRequest(DESCRIBE, s.uri, s.nextCSeq(), nil)
+func (s *Session) Describe() error {
+	req, err := s.newRequest(DESCRIBE, s.uri, s.nextCSeq(), nil)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	req.Header.Add("Accept", "application/sdp")
 
-	if s.conn == nil {
-		s.conn, err = net.Dial("tcp", req.URL.Host)
-		if err != nil {
-			return nil, err
-		}
-	}
+	err = s.sendRequest(req)
 
-	fmt.Println(req.String())
-
-	_, err = io.WriteString(s.conn, req.String())
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return ReadResponse(s.conn)
+	return nil
 }
 
 // Options sends a Options command
-func (s *Session) Options() (*Response, error) {
-	req, err := NewRequest(OPTIONS, s.uri, s.nextCSeq(), nil)
+func (s *Session) Options() error {
+	req, err := s.newRequest(OPTIONS, s.uri, s.nextCSeq(), nil)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
-	s.injectAuthencitationInfo(req, OPTIONS)
-
-	if s.conn == nil {
-		s.conn, err = net.Dial("tcp", s.host)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	fmt.Println(req.String())
-
-	_, err = io.WriteString(s.conn, req.String())
+	err = s.sendRequest(req)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return s.handleUnauthorized(ReadResponse(s.conn))
+	return nil
 }
 
 // Setup setups how the stream will be transported.
-func (s *Session) Setup(trackID, transport string) (*Response, error) {
-	req, err := NewRequest(SETUP, s.uri+"/"+trackID, s.nextCSeq(), nil)
+func (s *Session) Setup(trackID, transport string) error {
+	req, err := s.newRequest(SETUP, s.uri+"/"+trackID, s.nextCSeq(), nil)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	req.Header.Add("Transport", transport)
 
-	if s.conn == nil {
-		s.conn, err = net.Dial("tcp", req.URL.Host)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	fmt.Println(req.String())
-
-	_, err = io.WriteString(s.conn, req.String())
+	err = s.sendRequest(req)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	resp, err := ReadResponse(s.conn)
-	s.session = resp.Header.Get("Session")
-	return resp, err
+	return nil
 }
 
 // Play plays a video stream given the sessionID
-func (s *Session) Play(sessionID string) (*Response, error) {
-	req, err := NewRequest(PLAY, s.uri, s.nextCSeq(), nil)
+func (s *Session) Play() error {
+	req, err := s.newRequest(PLAY, s.uri, s.nextCSeq(), nil)
 	if err != nil {
-		panic(err)
+		return err
 	}
+	req.Header.Add("Session", s.session)
 
-	req.Header.Add("Session", sessionID)
-
-	if s.conn == nil {
-		s.conn, err = net.Dial("tcp", req.URL.Host)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	fmt.Println(req.String())
-
-	_, err = io.WriteString(s.conn, req.String())
+	err = s.sendRequest(req)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return ReadResponse(s.conn)
+	return nil
 }
+
+// ReadResponse reads the server's response
+func (s *Session) ReadResponse() (res *Response, err error) {
+	res, err = ReadResponse(s.conn)
+	// Deal with 401 before return.
+	res, err = s.handleUnauthorized(res, err)
+
+	// Deal with session ID.
+	if session := res.Header.Get("Session"); session != "" {
+		s.session = session
+	}
+	return
+}
+
+//
+// func (s *Session) ReadPacket() (av.Packet, error) {
+//
+// }
 
 type closer struct {
 	*bufio.Reader
@@ -410,6 +365,7 @@ func (c closer) Close() error {
 	return nil
 }
 
+// ParseRTSPVersion partse the version of RTSP protocol.
 func ParseRTSPVersion(s string) (proto string, major int, minor int, err error) {
 	parts := strings.SplitN(s, "/", 2)
 	proto = parts[0]
@@ -420,114 +376,5 @@ func ParseRTSPVersion(s string) (proto string, major int, minor int, err error) 
 	if minor, err = strconv.Atoi(parts[0]); err != nil {
 		return
 	}
-	return
-}
-
-// super simple RTSP parser; would be nice if net/http would allow more general parsing
-func ReadRequest(r io.Reader) (req *Request, err error) {
-	req = new(Request)
-	req.Header = make(map[string][]string)
-
-	b := bufio.NewReader(r)
-	var s string
-
-	// TODO: allow CR, LF, or CRLF
-	if s, err = b.ReadString('\n'); err != nil {
-		return
-	}
-
-	parts := strings.SplitN(s, " ", 3)
-	req.Method = parts[0]
-	if req.URL, err = url.Parse(parts[1]); err != nil {
-		return
-	}
-
-	req.Proto, req.ProtoMajor, req.ProtoMinor, err = ParseRTSPVersion(parts[2])
-	if err != nil {
-		return
-	}
-
-	// read headers
-	for {
-		if s, err = b.ReadString('\n'); err != nil {
-			return
-		} else if s = strings.TrimRight(s, "\r\n"); s == "" {
-			break
-		}
-
-		parts := strings.SplitN(s, ":", 2)
-		req.Header.Add(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
-	}
-
-	req.ContentLength, _ = strconv.Atoi(req.Header.Get("Content-Length"))
-	fmt.Println("Content Length:", req.ContentLength)
-	req.Body = closer{b, r}
-	return
-}
-
-type Response struct {
-	Proto      string
-	ProtoMajor int
-	ProtoMinor int
-
-	StatusCode int
-	Status     string
-
-	ContentLength int64
-
-	Header http.Header
-	Body   io.ReadCloser
-}
-
-func (res Response) String() string {
-	s := fmt.Sprintf("%s/%d.%d %d %s\n", res.Proto, res.ProtoMajor, res.ProtoMinor, res.StatusCode, res.Status)
-	for k, v := range res.Header {
-		for _, v := range v {
-			s += fmt.Sprintf("%s: %s\n", k, v)
-		}
-	}
-	return s
-}
-
-// ReadResponse reads the server's response
-func ReadResponse(r io.Reader) (res *Response, err error) {
-	res = new(Response)
-	res.Header = make(map[string][]string)
-
-	b := bufio.NewReader(r)
-	var s string
-
-	// TODO: allow CR, LF, or CRLF
-	if s, err = b.ReadString('\n'); err != nil {
-		return
-	}
-
-	parts := strings.SplitN(s, " ", 3)
-	res.Proto, res.ProtoMajor, res.ProtoMinor, err = ParseRTSPVersion(parts[0])
-	if err != nil {
-		return
-	}
-
-	if res.StatusCode, err = strconv.Atoi(parts[1]); err != nil {
-		return
-	}
-
-	res.Status = strings.TrimSpace(parts[2])
-
-	// read headers
-	for {
-		if s, err = b.ReadString('\n'); err != nil {
-			return
-		} else if s = strings.TrimRight(s, "\r\n"); s == "" {
-			break
-		}
-
-		parts := strings.SplitN(s, ":", 2)
-		res.Header.Add(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
-	}
-
-	res.ContentLength, _ = strconv.ParseInt(res.Header.Get("Content-Length"), 10, 64)
-
-	res.Body = closer{b, r}
 	return
 }
