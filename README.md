@@ -1,7 +1,14 @@
 rtsp
 ====
 
-`rtsp` implements RTSP in Go and can be used as a RTSP client that can consume any RTSP stream.
+`rtsp` is a toy program I wrote that can consume RTSP stream. In order to do that, I implemented the following:
+
+- RTSP protocol support
+- SDP protocol support
+- RTP/RTCP protocol support
+- RTSP over TCP interleaved support
+
+Although a toy, you can use it as the foundation of the RTSP client in your own program.
 
 License
 =======
