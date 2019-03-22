@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/WUMUXIAN/go-common-utils/timeutil"
 	"github.com/WUMUXIAN/rtsp/rtcp"
 	"github.com/WUMUXIAN/rtsp/rtp"
 	"github.com/WUMUXIAN/rtsp/sdp"
@@ -167,14 +168,15 @@ type Session struct {
 
 	streams []*Stream
 
-	RtpChan  <-chan rtp.Packet
-	rtpChan  chan<- rtp.Packet
-	RtcpChan <-chan rtcp.Packet
-	rtcpChan chan<- rtcp.Packet
+	rtpChan  chan rtp.Packet
+	rtcpChan chan rtcp.Packet
 
-	// ResChan <-chan Response
 	resChan chan Response
 	errChan chan error
+
+	timeout int // in seconds.
+
+	timeoutTimer int
 }
 
 // NewSession creates a new rtsp session to a certain stream.
@@ -203,11 +205,9 @@ func NewSession(rtspAddr string) (session *Session, err error) {
 
 	rtpChan := make(chan rtp.Packet, 10)
 	rtcpChan := make(chan rtcp.Packet, 10)
-	resChan := make(chan Response)
+	resChan := make(chan Response, 10)
 
-	session.RtpChan = rtpChan
 	session.rtpChan = rtpChan
-	session.RtcpChan = rtcpChan
 	session.rtcpChan = rtcpChan
 	session.resChan = resChan
 	session.errChan = make(chan error, 100)
@@ -236,7 +236,6 @@ func (s *Session) newRequest(method, urlStr, cSeq string, body []byte) (*Request
 	// always inject the authenciation info when send a request if there're any.
 	s.injectAuthencitationInfo(req, method)
 
-	fmt.Println(req)
 	return req, nil
 }
 
@@ -281,7 +280,7 @@ func (s *Session) sendRequest(req *Request) error {
 	if s.conn == nil {
 		return errors.New("connection not established")
 	}
-
+	fmt.Println(req)
 	_, err := io.WriteString(s.conn, req.String())
 	return err
 }
@@ -394,6 +393,8 @@ func (s *Session) Play() error {
 		s.state = StateWaitCodecData
 	}
 
+	s.timeoutTimer = int(timeutil.CurrentTimeStamp())
+
 	return nil
 }
 
@@ -415,7 +416,6 @@ func (s *Session) poll() {
 			s.errChan <- err
 			continue
 		}
-
 		// we check the very first character.
 		if b == '$' {
 			// prase this RTP/RTCP packet.
@@ -445,6 +445,8 @@ func (s *Session) poll() {
 				s.rtpChan <- rtp.ParsePacket(data, channel/2)
 			} else {
 				s.rtcpChan <- rtcp.ParsePacket(data)
+				// TODO: remove this if rtcp packet is used later.
+				<-s.rtcpChan
 			}
 		} else if b == 'R' {
 			header := make([]byte, 3)
@@ -504,16 +506,43 @@ func (s *Session) poll() {
 	}
 }
 
+func (s *Session) keepAlive() {
+	req, err := s.newRequest(GETPARAMETER, s.uri, s.nextCSeq(), nil)
+	if err != nil {
+		return
+	}
+	req.Header.Add("Session", s.session)
+	err = s.sendRequest(req)
+	if err != nil {
+		fmt.Println("Send Request error:", err)
+		return
+	}
+	_, err = s.readResponse()
+	if err != nil {
+		fmt.Println("Read Response error:", err)
+	}
+	return
+}
+
+// ReadAVPacket tried to read an av packet for the stream
 func (s *Session) ReadAVPacket() (avPacket *av.Packet, err error) {
 	if s.state < StateWaitCodecData {
 		return nil, errors.New("stream not played yet")
+	}
+
+	currentTime := int(timeutil.CurrentTimeStamp())
+	// we will do keep alive before it timeout.
+	if currentTime-s.timeoutTimer > s.timeout {
+		s.timeoutTimer = currentTime
+		// Send keep alive..
+		go s.keepAlive()
 	}
 
 	// Before we are ready for AV Packet, we need to settle the codec first.
 	for {
 		if s.state != StateReadyForAVPacket {
 			// Let's read a RTP packet out.
-			rtpPacket := <-s.RtpChan
+			rtpPacket := <-s.rtpChan
 			s.streams[rtpPacket.StreamIdx].HandleRtpPacket(rtpPacket)
 		} else {
 			break
@@ -526,7 +555,7 @@ func (s *Session) ReadAVPacket() (avPacket *av.Packet, err error) {
 	}
 
 	for {
-		rtpPacket := <-s.RtpChan
+		rtpPacket := <-s.rtpChan
 		var pkt av.Packet
 		var ok bool
 		pkt, ok, err = s.streams[rtpPacket.StreamIdx].HandleRtpPacket(rtpPacket)
@@ -549,7 +578,13 @@ func (s *Session) readResponse() (res *Response, err error) {
 		s.handleUnauthorized(resp)
 		// Deal with session ID.
 		if session := resp.Header.Get("Session"); session != "" {
-			s.session = session
+			sessionInfo := strings.Split(session, ";")
+			s.session = sessionInfo[0]
+			if len(sessionInfo) > 1 {
+				timeoutInfo := strings.Split(sessionInfo[1], "=")
+				s.timeout, _ = strconv.Atoi(timeoutInfo[1])
+				fmt.Printf("Time out in %d seconds\n", s.timeout)
+			}
 		}
 		return &resp, nil
 	case err = <-s.errChan:

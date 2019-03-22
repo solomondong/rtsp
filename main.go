@@ -77,11 +77,11 @@ func main() {
 		}
 
 		for {
-			pkt, err := sess.ReadAVPacket()
+			_, err := sess.ReadAVPacket()
 			if err != nil {
 				panic(err)
 			}
-			fmt.Println("Key frame:", pkt.IsKeyFrame)
+			// fmt.Println("Key frame:", pkt.IsKeyFrame)
 		}
 	} else {
 		r, err := client.ReadRequest(bytes.NewBufferString(sampleRequest))

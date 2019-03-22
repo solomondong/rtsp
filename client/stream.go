@@ -403,7 +403,7 @@ func (self *Stream) HandleRtpPacket(packet rtp.Packet) (avPacket av.Packet, ok b
 		ok = true
 		avPacket = self.pkt
 		avPacket.Time = time.Duration(self.timestamp) * time.Second / time.Duration(self.timeScale())
-		avPacket.Idx = 0
+		avPacket.Idx = int8(packet.StreamIdx)
 
 		if avPacket.Time < self.lasttime || avPacket.Time-self.lasttime > time.Minute*30 {
 			err = fmt.Errorf("rtp: time invalid stream#%d time=%v lasttime=%v", avPacket.Idx, avPacket.Time, self.lasttime)
