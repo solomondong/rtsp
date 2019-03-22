@@ -40,6 +40,8 @@ type Packet struct {
 	ExtData   []byte
 
 	Payload []byte
+
+	StreamIdx uint // this is not an additional field added by us to tell which stream this packet is for.
 }
 
 // Strings prints a rtp packet content
@@ -51,7 +53,7 @@ func (r Packet) String() string {
 }
 
 // ParsePacket parses data frame into RTP packet
-func ParsePacket(buf []byte) Packet {
+func ParsePacket(buf []byte, streamIdx uint) Packet {
 	packet := Packet{
 		Version:        buf[0] >> 6,
 		Padding:        buf[0]>>5&1 != 0,
@@ -62,6 +64,7 @@ func ParsePacket(buf []byte) Packet {
 		SequenceNumber: toUint(buf[2:4]),
 		Timestamp:      toUint(buf[4:8]),
 		SyncSource:     toUint(buf[8:12]),
+		StreamIdx:      streamIdx,
 	}
 	if packet.Version != RTPVERSION {
 		panic("Unsupported version")

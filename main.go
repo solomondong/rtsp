@@ -4,12 +4,9 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"io"
 	"log"
-	"strings"
 
 	"github.com/WUMUXIAN/rtsp/client"
-	"github.com/WUMUXIAN/rtsp/sdp"
 	"github.com/nareix/joy4/format/rtsp"
 )
 
@@ -63,70 +60,29 @@ func main() {
 		if err != nil {
 			log.Fatalln(err)
 		}
-		res, err := sess.ReadResponse()
-		if err != nil {
-			log.Fatalln(err)
-		}
-		fmt.Println(res)
 
 		err = sess.Describe()
 		if err != nil {
 			log.Fatalln(err)
 		}
-		res, err = sess.ReadResponse()
+
+		err = sess.Setup()
 		if err != nil {
 			log.Fatalln(err)
 		}
-		fmt.Println(res)
-
-		p, err := sdp.ParseSdp(&io.LimitedReader{R: res.Body, N: res.ContentLength})
-		if err != nil {
-			log.Fatalln(err)
-		}
-		log.Printf("%+v", p)
-
-		// After describing, we can create the stream already.
-		stream := &client.Stream{Sdp: p.Medias[0]}
-		stream.MakeCodecData()
-
-		err = sess.Setup(p.Medias[0].Control, p.Medias[0].Procotol+"/TCP")
-		if err != nil {
-			log.Fatalln(err)
-		}
-		res, err = sess.ReadResponse()
-		if err != nil {
-			log.Fatalln(err)
-		}
-		fmt.Println(res)
-
-		transport := res.Header.Get("Transport")
-		fmt.Println("Transport:", strings.Split(transport, ";"))
 
 		err = sess.Play()
 		if err != nil {
 			log.Fatalln(err)
 		}
-		res, err = sess.ReadResponse()
-		if err != nil {
-			log.Fatalln(err)
+
+		for {
+			pkt, err := sess.ReadAVPacket()
+			if err != nil {
+				panic(err)
+			}
+			fmt.Println("Key frame:", pkt.IsKeyFrame)
 		}
-		fmt.Println(res)
-
-		// rtpSession := rtp.NewTCPInterleavedSession(sess.Conn())
-		// for {
-		// 	select {
-		// 	case rtpPacket := <-rtpSession.RtpChan:
-		// 		// fmt.Println(rtpPacket)
-		// 		pkt, ok, err := stream.HandleRtpPacket(rtpPacket)
-		// 		if ok {
-		// 			fmt.Println("AV Pkt got,", pkt.IsKeyFrame, err)
-		// 		}
-		// 		fmt.Println("One packet processed.")
-		// 		// case rtcpPacket := <-rtpSession.RtcpChan:
-		// 		// 	fmt.Println(rtcpPacket)
-		// 	}
-		// }
-
 	} else {
 		r, err := client.ReadRequest(bytes.NewBufferString(sampleRequest))
 		if err != nil {

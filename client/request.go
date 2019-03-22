@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -22,7 +21,7 @@ type Request struct {
 	ProtoMinor    int
 	Header        http.Header
 	ContentLength int
-	Body          io.ReadCloser
+	Body          []byte
 }
 
 // String prints a request in a beautiful way.
@@ -34,10 +33,7 @@ func (r Request) String() string {
 		}
 	}
 	s += "\r\n"
-	if r.Body != nil {
-		str, _ := ioutil.ReadAll(r.Body)
-		s += string(str)
-	}
+	s += string(r.Body)
 	return s
 }
 
@@ -79,7 +75,8 @@ func ReadRequest(r io.Reader) (req *Request, err error) {
 
 	req.ContentLength, _ = strconv.Atoi(req.Header.Get("Content-Length"))
 	fmt.Println("Content Length:", req.ContentLength)
-	req.Body = closer{b, r}
+	req.Body = make([]byte, req.ContentLength)
+	_, err = io.ReadFull(r, req.Body)
 	return
 }
 

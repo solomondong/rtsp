@@ -72,7 +72,7 @@ func (s *UDPSession) HandleRtcpConn(conn net.Conn) {
 }
 
 func (s *UDPSession) handleRtp(buf []byte) {
-	s.rtpChan <- ParsePacket(buf)
+	s.rtpChan <- ParsePacket(buf, 0)
 }
 
 func (s *UDPSession) handleRtcp(buf []byte) {

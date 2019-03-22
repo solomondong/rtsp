@@ -21,7 +21,7 @@ type Response struct {
 	ContentLength int64
 
 	Header http.Header
-	Body   io.ReadCloser
+	Body   []byte
 }
 
 // String format the response print.
@@ -72,8 +72,5 @@ func ReadResponse(r io.Reader) (res *Response, err error) {
 		res.Header.Add(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
 	}
 
-	res.ContentLength, _ = strconv.ParseInt(res.Header.Get("Content-Length"), 10, 64)
-
-	res.Body = closer{b, r}
 	return
 }
