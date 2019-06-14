@@ -177,6 +177,16 @@ type Session struct {
 	timeout int // in seconds.
 
 	timeoutTimer int
+
+	SessionID string
+
+	MediaControl string
+	Framerate float64
+	Rtpmap int
+	CodecType string
+	TimeScale int
+
+	debug bool
 }
 
 // NewSession creates a new rtsp session to a certain stream.
@@ -189,12 +199,13 @@ func NewSession(rtspAddr string) (session *Session, err error) {
 		return nil, errors.New("invalid rtsp address")
 	}
 	session = new(Session)
+	session.debug = false
 	session.Digest = new(DigestAuthencitation)
 	if url.User != nil {
 		session.Digest.UserName = url.User.Username()
 		session.Digest.Password, _ = url.User.Password()
 	}
-	session.uri = url.Scheme + "://" + url.Host
+	session.uri = rtspAddr //url.Scheme + "://" + url.Host
 	session.host = url.Host
 
 	session.conn, err = net.Dial("tcp", session.host)
@@ -214,6 +225,10 @@ func NewSession(rtspAddr string) (session *Session, err error) {
 
 	go session.poll()
 	return
+}
+
+func (s *Session) Debug (bl bool) {
+	s.debug = bl
 }
 
 // NewRequest creates a new request.
@@ -266,7 +281,8 @@ func (s *Session) handleUnauthorized(response Response) {
 					dgFieldDetails := strings.Split(dgField, "=")
 					if dgFieldDetails[0] == "realm" {
 						s.Digest.Realm = strings.Trim(dgFieldDetails[1], "\"")
-					} else {
+					}
+					if dgFieldDetails[0] == "nonce" {
 						s.Digest.Nonce = strings.Trim(dgFieldDetails[1], "\"")
 					}
 				}
@@ -328,6 +344,11 @@ func (s *Session) Describe() error {
 	if err != nil {
 		return err
 	}
+
+	if p.Originator.SessionID != "" {
+		s.SessionID = p.Originator.SessionID
+	}
+
 	fmt.Printf("The Parsed Sdp: %+v\n", p)
 
 	// After describing, we can create the stream already.
@@ -335,6 +356,14 @@ func (s *Session) Describe() error {
 		stream := &Stream{Sdp: media}
 		stream.MakeCodecData()
 		s.streams = append(s.streams, stream)
+		if media.Type == "video" {
+			// Control:rtsp Framerate:0 Rtpmap:96 CodecType:H264 TimeScale:90000 
+			s.MediaControl = media.Control
+			s.Framerate = media.Framerate
+			s.Rtpmap = media.Rtpmap
+			s.CodecType = media.CodecType
+			s.TimeScale = media.TimeScale 
+		}
 	}
 
 	s.state = StateDescribed
@@ -349,13 +378,13 @@ func (s *Session) Setup() error {
 	}
 	// setup all streams.
 	for _, stream := range s.streams {
-		req, err := s.newRequest(SETUP, s.uri+"/"+stream.Sdp.Control, s.nextCSeq(), nil)
+		// req, err := s.newRequest(SETUP, s.uri+"/"+stream.Sdp.Control, s.nextCSeq(), nil)
+		req, err := s.newRequest(SETUP, stream.Sdp.Control, s.nextCSeq(), nil)
 		if err != nil {
 			return err
 		}
-
-		req.Header.Add("Transport", stream.Sdp.Procotol+"/TCP")
-
+		// req.Header.Add("Transport", stream.Sdp.Procotol+"/TCP")
+		req.Header.Add("Transport", stream.Sdp.Procotol+";unicast;client_port=56732-56733")
 		err = s.sendRequest(req)
 		if err != nil {
 			return err
@@ -408,6 +437,10 @@ func (s *Session) allCodecDataReady() bool {
 }
 
 func (s *Session) poll() {
+	defer func() {
+		if r := recover(); r != nil {
+		}
+	}()
 	for {
 		var b byte
 		var err error
@@ -612,4 +645,15 @@ func toUint(arr []byte) (ret uint) {
 		ret |= uint(b) << (8 * uint(len(arr)-i-1))
 	}
 	return ret
+}
+
+func (s *Session) Close() {
+	if s != nil {
+		s.bufConn = nil
+		s.rtpChan = nil
+		s.rtcpChan = nil
+		s.resChan = nil
+		s.errChan = nil
+		s.conn.Close()
+	}
 }
