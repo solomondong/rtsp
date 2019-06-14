@@ -3,7 +3,7 @@ package rtp
 import (
 	"net"
 
-	"github.com/WUMUXIAN/rtsp/rtcp"
+	"github.com/solomondong/rtsp/rtcp"
 )
 
 // UDPSession defines a udp session

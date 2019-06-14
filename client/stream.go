@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/WUMUXIAN/rtsp/rtp"
-	"github.com/WUMUXIAN/rtsp/sdp"
+	"github.com/solomondong/rtsp/rtp"
+	"github.com/solomondong/rtsp/sdp"
 	"github.com/nareix/joy4/av"
 	"github.com/nareix/joy4/codec"
 	"github.com/nareix/joy4/codec/aacparser"

@@ -13,9 +13,9 @@ import (
 	"strings"
 
 	"github.com/WUMUXIAN/go-common-utils/timeutil"
-	"github.com/WUMUXIAN/rtsp/rtcp"
-	"github.com/WUMUXIAN/rtsp/rtp"
-	"github.com/WUMUXIAN/rtsp/sdp"
+	"github.com/solomondong/rtsp/rtcp"
+	"github.com/solomondong/rtsp/rtp"
+	"github.com/solomondong/rtsp/sdp"
 	"github.com/nareix/joy4/av"
 )
 
